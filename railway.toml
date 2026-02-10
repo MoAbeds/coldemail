@@ -1,0 +1,14 @@
+# Railway configuration for multi-service deployment
+# This file tells Railway which services should use which build methods
+
+# Main Next.js web application
+[build]
+builder = "NIXPACKS"  # Use Railway's auto-detection for Next.js
+buildCommand = "npm install && npx prisma generate && npm run build"
+
+[deploy]
+startCommand = "npx prisma migrate deploy && npm start"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
