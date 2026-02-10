@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "export DATABASE_URL=$BUILD_DATABASE_URL && next build",
     "start": "next start -p $PORT",
     "lint": "next lint",
     "format": "prettier --write .",
