@@ -27,11 +27,14 @@ COPY --from=deps --chown=worker:nodejs /app/node_modules ./node_modules
 COPY --from=deps --chown=worker:nodejs /app/prisma ./prisma
 COPY --chown=worker:nodejs src/lib/workers ./src/lib/workers
 COPY --chown=worker:nodejs src/lib/db.ts ./src/lib/db.ts
+COPY --chown=worker:nodejs src/lib/crypto.ts ./src/lib/crypto.ts
 COPY --chown=worker:nodejs src/lib/personalization.ts ./src/lib/personalization.ts
 COPY --chown=worker:nodejs src/lib/providers ./src/lib/providers
 COPY --chown=worker:nodejs src/lib/email.ts ./src/lib/email.ts
 COPY --chown=worker:nodejs src/lib/email-connection.ts ./src/lib/email-connection.ts
-COPY --chown=worker:nodejs src/lib/encryption.ts ./src/lib/encryption.ts
+COPY --chown=worker:nodejs src/lib/email-health.ts ./src/lib/email-health.ts
+COPY --chown=worker:nodejs src/lib/queue.ts ./src/lib/queue.ts
+COPY --chown=worker:nodejs src/lib/scheduling.ts ./src/lib/scheduling.ts
 COPY --chown=worker:nodejs tsconfig.json ./
 COPY --chown=worker:nodejs package.json ./
 
