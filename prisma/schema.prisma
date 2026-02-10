@@ -1,0 +1,663 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ════════════════════════════════════════════════════════════════
+// ENUMS
+// ════════════════════════════════════════════════════════════════
+
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum EmailProvider {
+  GMAIL
+  OUTLOOK
+  SMTP
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum SequenceStepType {
+  EMAIL
+  WAIT
+  CONDITION
+  TASK
+}
+
+enum ABTestVariant {
+  A
+  B
+}
+
+enum ProspectStatus {
+  PENDING
+  SENDING
+  COMPLETED
+  PAUSED
+  BOUNCED
+  UNSUBSCRIBED
+}
+
+enum LeadTemperature {
+  HOT
+  WARM
+  COLD
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  WON
+  LOST
+}
+
+enum EmailEventType {
+  SENT
+  OPENED
+  CLICKED
+  REPLIED
+  BOUNCED
+  UNSUBSCRIBED
+}
+
+enum TaskType {
+  CALL
+  LINKEDIN
+  MANUAL
+}
+
+enum TaskStatus {
+  PENDING
+  COMPLETED
+  SKIPPED
+}
+
+enum IntegrationProvider {
+  SALESFORCE
+  HUBSPOT
+  ZAPIER
+  CALENDLY
+  SLACK
+}
+
+// ════════════════════════════════════════════════════════════════
+// AUTH — NextAuth.js required models
+// ════════════════════════════════════════════════════════════════
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 1. USER
+// ════════════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // NextAuth relations
+  accounts Account[]
+  sessions Session[]
+
+  // App relations
+  emailAccounts    EmailAccount[]
+  teamMemberships  TeamMember[]
+  ownedTeams       Team[]             @relation("TeamOwner")
+  createdCampaigns Campaign[]         @relation("CampaignCreator")
+  assignedLeads    Lead[]
+  assignedTasks    Task[]
+  createdTemplates EmailTemplate[]
+  savedFilters     SavedFilter[]
+  auditLogs        AuditLog[]
+
+  @@index([email])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 2. TEAM
+// ════════════════════════════════════════════════════════════════
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User              @relation("TeamOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  campaigns    Campaign[]
+  integrations Integration[]
+  templates    EmailTemplate[]
+  webhooks     Webhook[]
+  savedFilters SavedFilter[]
+  auditLogs    AuditLog[]
+
+  @@index([ownerId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 3. TEAM MEMBER (join table)
+// ════════════════════════════════════════════════════════════════
+
+model TeamMember {
+  userId     String
+  teamId     String
+  role       TeamRole @default(MEMBER)
+  invitedAt  DateTime @default(now())
+  acceptedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([userId, teamId])
+  @@index([teamId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 4. EMAIL ACCOUNT
+// ════════════════════════════════════════════════════════════════
+
+model EmailAccount {
+  id              String        @id @default(cuid())
+  userId          String
+  email           String
+  displayName     String
+  provider        EmailProvider @default(SMTP)
+
+  // SMTP (encrypted at app layer)
+  smtpHost        String?
+  smtpPort        Int?
+  smtpUser        String?
+  smtpPassword    String?       // encrypted
+
+  // IMAP
+  imapHost        String?
+  imapPort        Int?
+
+  // OAuth tokens (encrypted at app layer)
+  accessToken     String?       @db.Text // encrypted
+  refreshToken    String?       @db.Text // encrypted
+  tokenExpiresAt  DateTime?
+
+  // Health & limits
+  isVerified      Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  dailyLimit      Int      @default(50)
+  sentToday       Int      @default(0)
+  healthScore     Int      @default(100) // 0-100
+
+  // Error tracking for health score
+  bounceCount     Int      @default(0)
+  spamCount       Int      @default(0)
+  errorCount      Int      @default(0)
+
+  // Deliverability config
+  spfConfigured   Boolean  @default(false)
+  dkimConfigured  Boolean  @default(false)
+  dmarcConfigured Boolean  @default(false)
+
+  lastConnectedAt DateTime?
+  lastErrorAt     DateTime?
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns  Campaign[]
+  emailEvents EmailEvent[]
+
+  @@unique([userId, email])
+  @@index([userId])
+  @@index([isActive])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 5. CAMPAIGN
+// ════════════════════════════════════════════════════════════════
+
+model Campaign {
+  id              String         @id @default(cuid())
+  name            String
+  teamId          String
+  emailAccountId  String
+  createdById     String
+  status          CampaignStatus @default(DRAFT)
+
+  // Sending config
+  dailyLimit      Int      @default(50)
+  sendingSchedule Json?    // { startHour, endHour, days[] }
+  timezone        String   @default("UTC")
+
+  // Tracking toggles
+  trackOpens      Boolean  @default(true)
+  trackClicks     Boolean  @default(true)
+  trackReplies    Boolean  @default(true)
+
+  // Lifecycle timestamps
+  startedAt       DateTime?
+  pausedAt        DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  team         Team            @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  emailAccount EmailAccount    @relation(fields: [emailAccountId], references: [id])
+  createdBy    User            @relation("CampaignCreator", fields: [createdById], references: [id])
+  sequences    EmailSequence[]
+  prospects    Prospect[]
+  emailEvents  EmailEvent[]
+  leads        Lead[]
+  tasks        Task[]
+  abTests      ABTest[]
+
+  @@index([teamId])
+  @@index([status])
+  @@index([createdById])
+  @@index([teamId, status])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 6. EMAIL SEQUENCE
+// ════════════════════════════════════════════════════════════════
+
+model EmailSequence {
+  id            String           @id @default(cuid())
+  campaignId    String
+  stepNumber    Int
+  type          SequenceStepType @default(EMAIL)
+
+  // Content (for EMAIL type)
+  subject       String?
+  body          String?          @db.Text
+
+  // Timing
+  delayDays     Int              @default(0)
+  delayHours    Int              @default(0)
+
+  // Conditional logic (for CONDITION type)
+  condition     Json?
+
+  // A/B testing
+  abTestVariant ABTestVariant?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  campaign    Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  emailEvents EmailEvent[]
+
+  @@unique([campaignId, stepNumber])
+  @@index([campaignId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 7. PROSPECT
+// ════════════════════════════════════════════════════════════════
+
+model Prospect {
+  id               String          @id @default(cuid())
+  campaignId       String
+  email            String
+  firstName        String?
+  lastName         String?
+  company          String?
+  jobTitle         String?
+  customFields     Json?
+
+  status           ProspectStatus  @default(PENDING)
+  currentStep      Int             @default(0)
+
+  // Scheduling
+  lastEmailSentAt  DateTime?
+  nextScheduledAt  DateTime?
+
+  // Lead scoring
+  leadTemperature  LeadTemperature @default(COLD)
+  leadStatus       LeadStatus      @default(NEW)
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  campaign    Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  emailEvents EmailEvent[]
+  leads       Lead[]
+  tasks       Task[]
+
+  @@unique([campaignId, email])
+  @@index([campaignId])
+  @@index([status])
+  @@index([email])
+  @@index([campaignId, status])
+  @@index([nextScheduledAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 8. EMAIL EVENT
+// ════════════════════════════════════════════════════════════════
+
+model EmailEvent {
+  id              String         @id @default(cuid())
+  prospectId      String
+  campaignId      String
+  sequenceId      String
+  emailAccountId  String
+  type            EmailEventType
+  eventData       Json?          // link clicked, reply content, etc.
+  messageId       String?        // SMTP Message-ID for threading
+  timestamp       DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+
+  prospect     Prospect      @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaign     Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sequence     EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  emailAccount EmailAccount  @relation(fields: [emailAccountId], references: [id])
+
+  @@index([prospectId])
+  @@index([campaignId])
+  @@index([type])
+  @@index([timestamp])
+  @@index([campaignId, type])
+  @@index([prospectId, type])
+  @@index([messageId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 9. LEAD
+// ════════════════════════════════════════════════════════════════
+
+model Lead {
+  id             String          @id @default(cuid())
+  prospectId     String
+  campaignId     String
+  assignedToId   String?
+  status         LeadStatus      @default(NEW)
+  temperature    LeadTemperature @default(COLD)
+  lastActivityAt DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([temperature])
+  @@index([campaignId, status])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 10. TASK
+// ════════════════════════════════════════════════════════════════
+
+model Task {
+  id           String     @id @default(cuid())
+  prospectId   String
+  campaignId   String
+  assignedToId String?
+  type         TaskType   @default(MANUAL)
+  status       TaskStatus @default(PENDING)
+  title        String
+  description  String?    @db.Text
+  dueDate      DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([prospectId])
+  @@index([campaignId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([assignedToId, status])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 11. INTEGRATION
+// ════════════════════════════════════════════════════════════════
+
+model Integration {
+  id          String              @id @default(cuid())
+  teamId      String
+  provider    IntegrationProvider
+  credentials Json?               // encrypted at app layer
+  config      Json?
+  isActive    Boolean             @default(true)
+  lastSyncAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  team     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  syncLogs SyncLog[]
+
+  @@unique([teamId, provider])
+  @@index([teamId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 11b. SYNC LOG
+// ════════════════════════════════════════════════════════════════
+
+model SyncLog {
+  id               String   @id @default(cuid())
+  integrationId    String
+  status           String   // SUCCESS, FAILED, PARTIAL
+  direction        String   @default("push") // push, pull, bidirectional
+  recordsProcessed Int      @default(0)
+  recordsFailed    Int      @default(0)
+  errors           Json?    // Array of error messages
+  startedAt        DateTime @default(now())
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId])
+  @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 11c. WEBHOOK DELIVERY
+// ════════════════════════════════════════════════════════════════
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  webhookId  String
+  event      String
+  payload    Json
+  statusCode Int?
+  response   String?  @db.Text
+  attempts   Int      @default(1)
+  success    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 12. EMAIL TEMPLATE
+// ════════════════════════════════════════════════════════════════
+
+model EmailTemplate {
+  id         String   @id @default(cuid())
+  teamId     String
+  createdById String
+  name       String
+  subject    String
+  body       String   @db.Text
+  category   String?
+  isShared   Boolean  @default(false)
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  team      Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([teamId])
+  @@index([teamId, category])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 13. A/B TEST
+// ════════════════════════════════════════════════════════════════
+
+model ABTest {
+  id             String         @id @default(cuid())
+  campaignId     String
+  testName       String
+  variants       Json           // { A: { subject, body }, B: { subject, body } }
+  winnerVariant  ABTestVariant?
+  isActive       Boolean        @default(true)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([isActive])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 14. WEBHOOK
+// ════════════════════════════════════════════════════════════════
+
+model Webhook {
+  id        String   @id @default(cuid())
+  teamId    String
+  url       String
+  events    String[] // e.g. ["email.sent", "email.opened", "prospect.replied"]
+  secret    String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  team       Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([teamId])
+  @@index([isActive])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 15. SAVED FILTER
+// ════════════════════════════════════════════════════════════════
+
+model SavedFilter {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  name      String
+  scope     String   // "campaigns", "leads", "prospects"
+  filters   Json     // The filter state object
+  isShared  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, scope])
+  @@index([userId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// 16. AUDIT LOG
+// ════════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String?
+  action    String   // e.g. "campaign.created", "team.member_added"
+  entity    String?  // e.g. "Campaign", "TeamMember"
+  entityId  String?
+  metadata  Json?    // Additional context
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([teamId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([teamId, createdAt])
+}

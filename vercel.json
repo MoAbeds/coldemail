@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npx prisma generate && next build",
+  "installCommand": "npm ci",
+  "crons": [
+    {
+      "path": "/api/cron/reset-daily-limits",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/check-replies",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/process-queue",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/update-analytics",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

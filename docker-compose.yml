@@ -1,0 +1,55 @@
+# Local development stack: PostgreSQL + Redis + Workers
+#
+# Usage:
+#   docker compose up -d         # Start all services
+#   docker compose up -d db redis # Start infra only
+#   docker compose logs -f worker # Watch worker logs
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coldclaude
+      POSTGRES_PASSWORD: coldclaude
+      POSTGRES_DB: coldclaude
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coldclaude"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://coldclaude:coldclaude@db:5432/coldclaude?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      NODE_ENV: production
+    env_file:
+      - .env.local
+
+volumes:
+  pgdata:
