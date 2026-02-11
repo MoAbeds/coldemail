@@ -7,7 +7,7 @@ builder = "NIXPACKS"  # Use Railway's auto-detection for Next.js
 buildCommand = "npm install && npx prisma generate && npm run build"
 
 [deploy]
-startCommand = "npm start"
+startCommand = "npx prisma migrate deploy && npm start"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
